@@ -18,10 +18,9 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+      - - name: Install deps
+  run: pip install -r analytics/scripts/requirements.txt
+
 
       - name: Run Facebook Ads pull
         env:
