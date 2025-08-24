@@ -2,17 +2,17 @@ import os
 import sys
 import requests
 import pandas as pd
-from typing import Iterator, Dict, Any
+from typing import Iterator, Dict, Any, List
 
 # --- Configuration ---
-# Fetches configuration from environment variables.
+# Fetches configuration from environment variables. Exits if required ones are missing.
 try:
     TOKEN = os.environ["FB_ACCESS_TOKEN"]
     ACCOUNT = os.environ["FB_AD_ACCOUNT_ID"]
 except KeyError as e:
     sys.exit(f"❌ Error: Missing required environment variable: {e}")
 
-# Default to a recent, valid API version; v23.0 is too far in the future.
+# Use getenv for optional variables with sensible defaults.
 API_VER = os.getenv("FB_API_VER", "v20.0")
 LOOKBACK = int(os.getenv("FB_LOOKBACK_DAYS", "7"))
 OUT_DIR = "analytics/dataprocessed"
@@ -30,6 +30,7 @@ def paginate(url: str, params: Dict[str, Any] = None) -> Iterator[Dict[str, Any]
 
     This generator function yields each item from the 'data' array in an API
     response and automatically follows the 'next' link for subsequent pages.
+    It includes robust error handling for network and API issues.
     """
     current_url = url
     current_params = params or {}
@@ -53,46 +54,78 @@ def paginate(url: str, params: Dict[str, Any] = None) -> Iterator[Dict[str, Any]
             current_url = next_url
             current_params = {}
 
+        except requests.exceptions.HTTPError as e:
+            # Catches specific API errors (like the 'breakdowns' error) and prints details.
+            print(f"❌ API Error on request to {e.response.url}:\n   {e.response.status_code}: {e.response.text}", file=sys.stderr)
+            return # Stop iteration on error.
         except requests.exceptions.RequestException as e:
-            print(f"API request failed. URL: {resp.request.url}\nError: {e}", file=sys.stderr)
-            return  # Stop iteration on error.
+            print(f"❌ Network or request error: {e}", file=sys.stderr)
+            return
         except requests.exceptions.JSONDecodeError:
-            print(f"Failed to decode JSON. URL: {resp.request.url}\nResponse: {resp.text}", file=sys.stderr)
-            return  # Stop iteration on error.
+            print(f"❌ Failed to decode JSON from response: {resp.text}", file=sys.stderr)
+            return
 
 
 def pull_metadata() -> pd.DataFrame:
     """Pulls ad-level metadata (ID, name, status, creative, etc.)."""
+    print("➡️  Fetching ad metadata...")
     fields = [
         "id", "name", "status", "effective_status",
         "created_time", "updated_time",
         "adset{id,name}", "campaign{id,name}",
-        "creative{id,name,thumbnail_url,effective_object_story_id,object_story_spec}"
+        "creative{id,name,thumbnail_url,effective_object_story_id}"
     ]
     url = f"{BASE_URL}/{API_VER}/{ACCOUNT}/ads"
     params = {"fields": ",".join(fields), "limit": 500}
     data = list(paginate(url, params))
-    # Return a DataFrame, even if it's empty.
     return pd.DataFrame(data) if data else pd.DataFrame()
 
 
-def pull_insights(level: str) -> pd.DataFrame:
-    """Pulls performance insights for a given level ('ad' or 'adset')."""
+def pull_insights(level: str, breakdowns: List[str] = None) -> pd.DataFrame:
+    """
+    Pulls performance insights for a given level, with optional breakdowns.
+    
+    Args:
+        level (str): The level to pull data for ('ad', 'adset', or 'campaign').
+        breakdowns (List[str], optional): A list of valid breakdown values.
+                                          Defaults to None (no breakdowns).
+    """
+    if breakdowns:
+        print(f"➡️  Fetching {level}-level insights with breakdowns: {breakdowns}...")
+    else:
+        print(f"➡️  Fetching {level}-level insights...")
+
     fields = [
         "date_start", "date_stop",
         "campaign_id", "campaign_name", "adset_id", "adset_name", "ad_id", "ad_name",
-        "impressions", "reach", "clicks", "unique_clicks",
-        "inline_link_clicks", "spend", "cpc", "ctr", "cpm"
+        "impressions", "reach", "clicks", "spend", "cpc", "ctr", "cpm"
     ]
     url = f"{BASE_URL}/{API_VER}/{ACCOUNT}/insights"
+    
     params = {
         "level": level,
         "date_preset": f"last_{LOOKBACK}d",
         "fields": ",".join(fields),
-        "limit": 500  # A limit of 500 is generally safer and more reliable than 5000.
+        "limit": 500
     }
+
+    # IMPORTANT: Only add the 'breakdowns' parameter if it's actually provided.
+    # This prevents the API error you were seeing.
+    if breakdowns:
+        params["breakdowns"] = ",".join(breakdowns)
+    
     data = list(paginate(url, params))
     return pd.DataFrame(data) if data else pd.DataFrame()
+
+
+def save_dataframe(df: pd.DataFrame, filename: str):
+    """Saves a DataFrame to a CSV file if it's not empty."""
+    if not df.empty:
+        path = os.path.join(OUT_DIR, filename)
+        df.to_csv(path, index=False)
+        print(f"✅ Wrote {len(df)} rows to {path}")
+    else:
+        print(f"⚠️ No data returned for {filename}; file not created.")
 
 
 def main():
@@ -100,35 +133,25 @@ def main():
     print("🚀 Starting Facebook Ads data pull...")
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # --- Metadata Pull ---
-    print("\nPulling ads metadata...")
+    # --- Pull Metadata ---
     meta_df = pull_metadata()
-    if not meta_df.empty:
-        path = os.path.join(OUT_DIR, "facebook_ads_meta.csv")
-        meta_df.to_csv(path, index=False)
-        print(f"✅ Wrote {len(meta_df)} rows to {path}")
-    else:
-        print("⚠️ No metadata was returned from the API.")
+    save_dataframe(meta_df, "facebook_ads_meta.csv")
 
-    # --- Ad Insights Pull ---
-    print("\nPulling ad-level insights...")
+    # --- Pull Insights (No Breakdowns by Default) ---
     ad_df = pull_insights("ad")
-    if not ad_df.empty:
-        path = os.path.join(OUT_DIR, "facebook_ads_insights.csv")
-        ad_df.to_csv(path, index=False)
-        print(f"✅ Wrote {len(ad_df)} rows to {path}")
-    else:
-        print("⚠️ No ad-level insights were returned from the API.")
-
-    # --- Adset Insights Pull ---
-    print("\nPulling adset-level insights...")
+    save_dataframe(ad_df, "facebook_ads_insights.csv")
+    
     adset_df = pull_insights("adset")
-    if not adset_df.empty:
-        path = os.path.join(OUT_DIR, "facebook_adset_insights.csv")
-        adset_df.to_csv(path, index=False)
-        print(f"✅ Wrote {len(adset_df)} rows to {path}")
-    else:
-        print("⚠️ No adset-level insights were returned from the API.")
+    save_dataframe(adset_df, "facebook_adset_insights.csv")
+
+    # --- EXAMPLE: Pull Insights WITH Breakdowns ---
+    # To get breakdowns, uncomment the lines below and use valid values
+    # from the Facebook API documentation (e.g., 'age', 'gender', 'country', 'device_platform').
+    #
+    # print("\n🚀 Starting pull for data with breakdowns...")
+    # breakdown_values = ["device_platform", "publisher_platform"]
+    # ad_breakdown_df = pull_insights("ad", breakdowns=breakdown_values)
+    # save_dataframe(ad_breakdown_df, "facebook_ads_insights_by_platform.csv")
 
     print("\n✨ Data pull complete.")
 
