@@ -13,6 +13,7 @@ if not TOKEN or not ACCOUNT:
 session = requests.Session()
 session.headers.update({"Authorization": f"Bearer {TOKEN}"})
 
+
 def paginate(url, params=None):
     params = params or {}
     while True:
@@ -27,6 +28,7 @@ def paginate(url, params=None):
             break
         url, params = next_url, {}
         time.sleep(0.2)
+
 
 def flatten_creative(row):
     out = {
@@ -47,6 +49,7 @@ def flatten_creative(row):
     out["thumbnail_url"] = cr.get("thumbnail_url")
     out["effective_object_story_id"] = cr.get("effective_object_story_id")
 
+    # object_story_spec
     oss = cr.get("object_story_spec") or {}
     link = (oss.get("link_data") or {})
     out["primary_text"] = oss.get("message") or link.get("message")
@@ -56,6 +59,7 @@ def flatten_creative(row):
     out["caption"] = link.get("caption")
     out["call_to_action_type"] = (link.get("call_to_action") or {}).get("type")
 
+    # media
     out["image_hash"] = link.get("image_hash")
     if "child_attachments" in link:
         ca = link["child_attachments"][0] if link["child_attachments"] else {}
@@ -66,6 +70,7 @@ def flatten_creative(row):
     out["video_description"] = video_data.get("description")
     out["video_call_to_action_type"] = (video_data.get("call_to_action") or {}).get("type")
     return out
+
 
 def pull_ads_metadata():
     fields = ",".join([
@@ -79,6 +84,7 @@ def pull_ads_metadata():
     rows = [flatten_creative(ad) for ad in paginate(url, params)]
     return pd.DataFrame(rows)
 
+
 INSIGHT_FIELDS = ",".join([
     "date_start","date_stop",
     "campaign_id","campaign_name",
@@ -87,6 +93,7 @@ INSIGHT_FIELDS = ",".join([
     "impressions","reach","clicks","unique_clicks",
     "inline_link_clicks","spend","cpc","ctr","cpm"
 ])
+
 
 def pull_insights(level="ad", preset_days=LOOKBACK, breakdowns=None, time_increment=None):
     url = f"https://graph.facebook.com/{API_VER}/{ACCOUNT}/insights"
@@ -99,36 +106,40 @@ def pull_insights(level="ad", preset_days=LOOKBACK, breakdowns=None, time_increm
     if breakdowns:
         params["breakdowns"] = ",".join(breakdowns)
     if time_increment:
-        params["time_increment"] = time_increment  # e.g., "1" for daily
+        params["time_increment"] = time_increment  # "1" for daily
     rows = list(paginate(url, params))
     return pd.DataFrame(rows)
+
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # 1) Ad metadata + creative
+    # 1) Metadata
     meta_df = pull_ads_metadata()
     meta_path = os.path.join(OUT_DIR, "facebook_ads_meta.csv")
     meta_df.to_csv(meta_path, index=False)
     print(f"Wrote {len(meta_df)} rows to {meta_path}")
 
-    # 2) Insights (ad level)
+    # 2) Ad level insights
     ins_df = pull_insights()
     ins_path = os.path.join(OUT_DIR, "facebook_ads_insights.csv")
     ins_df.to_csv(ins_path, index=False)
     print(f"Wrote {len(ins_df)} rows to {ins_path}")
 
-    # 3) Daily insights… use time_increment instead of a date breakdown
+    # 3) Daily insights via time_increment
     daily_df = pull_insights(time_increment="1")
     daily_path = os.path.join(OUT_DIR, "facebook_ads_insights_daily.csv")
     daily_df.to_csv(daily_path, index=False)
     print(f"Wrote {len(daily_df)} rows to {daily_path}")
 
-    # 4) Placement breakdowns… valid values below
-    place_df = pull_insights(breakdowns=["publisher_platform","platform_position","device_platform"])
-    place_path = os.path.join(OUT_DIR, "facebook_ads_insights_placement.csv")
-    place_df.to_csv(place_path, index=False)
-    print(f"Wrote {len(place_df)} rows to {place_path}")
+    # 4) Placement breakdowns... run as separate calls
+    for bd in [["publisher_platform"], ["platform_position"], ["device_platform"]]:
+        bname = "_".join(bd)
+        df = pull_insights(breakdowns=bd)
+        path = os.path.join(OUT_DIR, f"facebook_ads_insights_{bname}.csv")
+        df.to_csv(path, index=False)
+        print(f"Wrote {len(df)} rows to {path}")
+
 
 if __name__ == "__main__":
     main()
