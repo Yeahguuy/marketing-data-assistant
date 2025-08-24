@@ -1,49 +1,53 @@
-name: Marketing Data Pipeline
+# analytics/scripts/facebook_ads_pull.py
+import os, sys, time, requests, pandas as pd
 
-on:
-  schedule:
-    - cron: "0 10 * * *"   # daily 10:00 UTC
-  workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/marketing-data.yml"
-      - "analytics/scripts/**"
-      - "requirements.txt"
+TOKEN = os.environ.get("FB_ACCESS_TOKEN")
+ACCOUNT = os.environ.get("FB_AD_ACCOUNT_ID")         # act_###########
+API_VER = os.environ.get("FB_API_VER", "v20.0")
+LOOKBACK = int(os.environ.get("FB_LOOKBACK_DAYS", "7"))
+OUT = os.environ.get("FB_OUT_FILE", "analytics/dataprocessed/facebook_live_ads.csv")
 
-permissions:
-  contents: write
+# sanity checks
+missing = [k for k,v in {"FB_ACCESS_TOKEN": TOKEN, "FB_AD_ACCOUNT_ID": ACCOUNT}.items() if not v]
+if missing:
+    sys.exit(f"Missing env vars: {', '.join(missing)}")
 
-jobs:
-  facebook-ads:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+# fields MUST be a comma string... no braces
+FIELDS = [
+    "date_start","date_stop",
+    "campaign_id","campaign_name",
+    "adset_id","adset_name",
+    "ad_id","ad_name",
+    "impressions","clicks","unique_clicks",
+    "spend","cpc","ctr","cpm","reach","inline_link_clicks"
+]
+fields_str = ",".join(FIELDS)
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+params = {
+    "level": "ad",
+    "date_preset": f"last_{LOOKBACK}d",
+    "fields": fields_str,
+    "limit": 5000
+}
+url = f"https://graph.facebook.com/{API_VER}/{ACCOUNT}/insights"
 
-      - name: Install deps
-        run: pip install -r requirements.txt
+session = requests.Session()
+session.headers.update({"Authorization": f"Bearer {TOKEN}"})
 
-      - name: Ensure output folder exists
-        run: mkdir -p analytics/dataprocessed
+all_rows = []
+while True:
+    r = session.get(url, params=params, timeout=60)
+    if not r.ok:
+        sys.exit(f"[ERROR] Facebook API error {r.status_code}: {r.text}")
+    payload = r.json()
+    all_rows.extend(payload.get("data", []))
+    next_url = payload.get("paging", {}).get("next")
+    if not next_url:
+        break
+    url, params = next_url, {}
+    time.sleep(0.2)
 
-      - name: Pull Facebook Ads
-        env:
-          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
-          FB_AD_ACCOUNT_ID: ${{ secrets.FB_AD_ACCOUNT_ID }}
-          FB_API_VER: "v20.0"
-          FB_LOOKBACK_DAYS: "7"
-          FB_OUT_FILE: "analytics/dataprocessed/facebook_live_ads.csv"
-        run: python analytics/scripts/facebook_ads_pull.py
-
-      - name: Commit CSV if changed
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add analytics/dataprocessed/facebook_live_ads.csv
-          git commit -m "update fb csv" || echo "no changes"
-          git push
+df = pd.DataFrame(all_rows)
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
+df.to_csv(OUT, index=False)
+print(f"Wrote {len(df)} rows to {OUT}")
