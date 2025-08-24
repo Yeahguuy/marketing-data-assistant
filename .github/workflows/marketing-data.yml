@@ -1,16 +1,56 @@
-      - name: Pull FB Ads basic (existing)
+name: Marketing Data Pipeline
+
+on:
+  schedule:
+    - cron: "0 10 * * *"   # daily 10:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  facebook-ads:
+    runs-on: ubuntu-latest
+
+    env:
+      FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+      FB_AD_ACCOUNT_ID: ${{ secrets.FB_AD_ACCOUNT_ID }}
+      FB_API_VER: "v20.0"
+      FB_LOOKBACK_DAYS: "7"
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Ensure output folder exists
+        run: mkdir -p analytics/dataprocessed
+
+      # Basic ad-level insights to facebook_live_ads.csv
+      - name: Pull FB Ads basic
         env:
-          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
-          FB_AD_ACCOUNT_ID: ${{ secrets.FB_AD_ACCOUNT_ID }}
-          FB_API_VER: "v20.0"
-          FB_LOOKBACK_DAYS: "7"
           FB_OUT_FILE: "analytics/dataprocessed/facebook_live_ads.csv"
         run: python analytics/scripts/facebook_ads_pull.py
 
+      # Full metadata, daily, and placement breakdowns
       - name: Pull FB Ads full metadata + breakdowns
-        env:
-          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
-          FB_AD_ACCOUNT_ID: ${{ secrets.FB_AD_ACCOUNT_ID }}
-          FB_API_VER: "v20.0"
-          FB_LOOKBACK_DAYS: "7"
         run: python analytics/scripts/facebook_ads_full_pull.py
+
+      - name: Commit CSVs if changed
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add analytics/dataprocessed/facebook_live_ads.csv
+          git add analytics/dataprocessed/facebook_ads_meta.csv
+          git add analytics/dataprocessed/facebook_ads_insights.csv
+          git add analytics/dataprocessed/facebook_ads_insights_daily.csv
+          git add analytics/dataprocessed/facebook_ads_insights_placement.csv
+          git commit -m "update fb exports" || echo "no changes"
+          git push
