@@ -19,16 +19,16 @@ def paginate(url, params=None):
         r = session.get(url, params=params, timeout=90)
         if not r.ok:
             sys.exit(f"[ERROR] {url} -> {r.status_code}: {r.text}")
-        data = r.json()
-        for row in data.get("data", []):
+        payload = r.json()
+        for row in payload.get("data", []):
             yield row
-        next_url = data.get("paging", {}).get("next")
+        next_url = payload.get("paging", {}).get("next")
         if not next_url:
             break
         url, params = next_url, {}
+        time.sleep(0.2)
 
 def flatten_creative(row):
-    """Flatten creative headline, primary text, description, CTA, link, media"""
     out = {
         "ad_id": row.get("id"),
         "ad_name": row.get("name"),
@@ -47,21 +47,17 @@ def flatten_creative(row):
     out["thumbnail_url"] = cr.get("thumbnail_url")
     out["effective_object_story_id"] = cr.get("effective_object_story_id")
 
-    # object_story_spec → link_data/message variations
     oss = cr.get("object_story_spec") or {}
     link = (oss.get("link_data") or {})
     out["primary_text"] = oss.get("message") or link.get("message")
-    out["headline"] = link.get("name")                    # headline
+    out["headline"] = link.get("name")
     out["description"] = link.get("description")
     out["display_link"] = link.get("link")
     out["caption"] = link.get("caption")
-    cta = (link.get("call_to_action") or {}).get("type")
-    out["call_to_action_type"] = cta
+    out["call_to_action_type"] = (link.get("call_to_action") or {}).get("type")
 
-    # image or video
     out["image_hash"] = link.get("image_hash")
     if "child_attachments" in link:
-        # carousels… take first as representative, also store JSON
         ca = link["child_attachments"][0] if link["child_attachments"] else {}
         out["carousel_headline_first"] = ca.get("name")
         out["carousel_desc_first"] = ca.get("description")
@@ -80,30 +76,30 @@ def pull_ads_metadata():
     ])
     url = f"https://graph.facebook.com/{API_VER}/{ACCOUNT}/ads"
     params = {"fields": fields, "limit": 500}
-    rows = []
-    for ad in paginate(url, params):
-        rows.append(flatten_creative(ad))
-    df = pd.DataFrame(rows)
-    return df
+    rows = [flatten_creative(ad) for ad in paginate(url, params)]
+    return pd.DataFrame(rows)
 
-def pull_insights(level="ad", preset_days=LOOKBACK, breakdowns=None):
-    fields = ",".join([
-        "date_start","date_stop",
-        "campaign_id","campaign_name",
-        "adset_id","adset_name",
-        "ad_id","ad_name",
-        "impressions","reach","clicks","unique_clicks",
-        "inline_link_clicks","spend","cpc","ctr","cpm"
-    ])
+INSIGHT_FIELDS = ",".join([
+    "date_start","date_stop",
+    "campaign_id","campaign_name",
+    "adset_id","adset_name",
+    "ad_id","ad_name",
+    "impressions","reach","clicks","unique_clicks",
+    "inline_link_clicks","spend","cpc","ctr","cpm"
+])
+
+def pull_insights(level="ad", preset_days=LOOKBACK, breakdowns=None, time_increment=None):
     url = f"https://graph.facebook.com/{API_VER}/{ACCOUNT}/insights"
     params = {
         "level": level,
         "date_preset": f"last_{preset_days}d",
-        "fields": fields,
+        "fields": INSIGHT_FIELDS,
         "limit": 5000
     }
     if breakdowns:
         params["breakdowns"] = ",".join(breakdowns)
+    if time_increment:
+        params["time_increment"] = time_increment  # e.g., "1" for daily
     rows = list(paginate(url, params))
     return pd.DataFrame(rows)
 
@@ -122,15 +118,14 @@ def main():
     ins_df.to_csv(ins_path, index=False)
     print(f"Wrote {len(ins_df)} rows to {ins_path}")
 
-    # 3) Optional breakdowns… daily and placement
-    daily_df = pull_insights(breakdowns=["date"])
+    # 3) Daily insights… use time_increment instead of a date breakdown
+    daily_df = pull_insights(time_increment="1")
     daily_path = os.path.join(OUT_DIR, "facebook_ads_insights_daily.csv")
     daily_df.to_csv(daily_path, index=False)
     print(f"Wrote {len(daily_df)} rows to {daily_path}")
 
-    place_df = pull_insights(
-        breakdowns=["publisher_platform","platform_position","device_platform"]
-    )
+    # 4) Placement breakdowns… valid values below
+    place_df = pull_insights(breakdowns=["publisher_platform","platform_position","device_platform"])
     place_path = os.path.join(OUT_DIR, "facebook_ads_insights_placement.csv")
     place_df.to_csv(place_path, index=False)
     print(f"Wrote {len(place_df)} rows to {place_path}")
