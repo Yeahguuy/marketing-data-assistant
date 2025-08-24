@@ -21,11 +21,19 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.11.9"
+          check-latest: true
+
+      - name: Show Python versions
+        run: |
+          python -V
+          pip -V
 
       - name: Install deps
         run: pip install -r requirements.txt
@@ -45,12 +53,22 @@ jobs:
 
       - name: Commit CSVs if changed
         run: |
+          set -e
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+
           git add analytics/dataprocessed/facebook_live_ads.csv
-          git add analytics/dataprocessed/facebook_ads_meta.csv
-          git add analytics/dataprocessed/facebook_ads_insights.csv
-          git add analytics/dataprocessed/facebook_ads_insights_daily.csv
-          git add analytics/dataprocessed/facebook_ads_insights_placement.csv
-          git commit -m "update fb exports" || echo "no changes"
+          git add analytics/dataprocessed/facebook_ads_meta.csv || true
+          git add analytics/dataprocessed/facebook_ads_insights.csv || true
+          git add analytics/dataprocessed/facebook_ads_insights_daily.csv || true
+          git add analytics/dataprocessed/facebook_ads_insights_placement.csv || true
+
+          if git diff --cached --quiet; then
+            echo "no changes"
+            exit 0
+          fi
+
+          git commit -m "update fb exports"
+          BRANCH="${GITHUB_REF_NAME:-main}"
+          git pull --rebase origin "$BRANCH" || git pull --rebase origin main
           git push
