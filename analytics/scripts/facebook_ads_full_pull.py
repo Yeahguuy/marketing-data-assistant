@@ -17,7 +17,8 @@ def paginate(url, params=None):
     while True:
         resp = session.get(url, params=params, timeout=90)
         if not resp.ok:
-            raise RuntimeError(f"{resp.status_code}: {resp.text}")
+            print(f"Skipping call to {url} with params {params}: {resp.text}")
+return []
         payload = resp.json()
         for row in payload.get("data", []):
             yield row
