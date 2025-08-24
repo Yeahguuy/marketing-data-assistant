@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import requests
 import pandas as pd
 from typing import Iterator, Dict, Any, List
@@ -26,43 +27,47 @@ session.headers.update({"Authorization": f"Bearer {TOKEN}"})
 
 def paginate(url: str, params: Dict[str, Any] = None) -> Iterator[Dict[str, Any]]:
     """
-    Handles pagination for the Facebook Graph API.
-
-    This generator function yields each item from the 'data' array in an API
-    response and automatically follows the 'next' link for subsequent pages.
-    It includes robust error handling for network and API issues.
+    Handles pagination for the Facebook Graph API with enhanced error handling.
     """
     current_url = url
     current_params = params or {}
     while True:
         try:
             resp = session.get(current_url, params=current_params, timeout=90)
-            # Raise an exception for HTTP errors (e.g., 400, 401, 500).
             resp.raise_for_status()
             payload = resp.json()
 
-            # Yield each record from the current page's data.
             yield from payload.get("data", [])
 
-            # Get the full URL for the next page.
             next_url = payload.get("paging", {}).get("next")
             if not next_url:
-                break  # No more pages.
-
-            # The 'next_url' contains all necessary parameters, so we use it directly
-            # and clear the params dictionary for the next loop.
+                break
+            
             current_url = next_url
             current_params = {}
 
         except requests.exceptions.HTTPError as e:
-            # Catches specific API errors (like the 'breakdowns' error) and prints details.
-            print(f"❌ API Error on request to {e.response.url}:\n   {e.response.status_code}: {e.response.text}", file=sys.stderr)
-            return # Stop iteration on error.
+            # Enhanced error handling to provide more specific advice.
+            error_details = {}
+            try:
+                error_details = e.response.json().get("error", {})
+            except json.JSONDecodeError:
+                pass # Response was not JSON
+
+            error_code = error_details.get("code")
+            error_message = error_details.get("message")
+
+            print(f"❌ API Error on request to {e.response.url}:\n   Status: {e.response.status_code}", file=sys.stderr)
+            
+            if error_code == 100:
+                print(f"   Message: {error_message}", file=sys.stderr)
+                print("   💡 HINT: This is a 'Bad Request' error, often caused by an invalid combination of 'breakdowns' or incompatible 'fields' and 'breakdowns'. Please check the Facebook API documentation for valid combinations.", file=sys.stderr)
+            else:
+                print(f"   Response: {e.response.text}", file=sys.stderr)
+
+            return
         except requests.exceptions.RequestException as e:
             print(f"❌ Network or request error: {e}", file=sys.stderr)
-            return
-        except requests.exceptions.JSONDecodeError:
-            print(f"❌ Failed to decode JSON from response: {resp.text}", file=sys.stderr)
             return
 
 
@@ -84,16 +89,11 @@ def pull_metadata() -> pd.DataFrame:
 def pull_insights(level: str, breakdowns: List[str] = None) -> pd.DataFrame:
     """
     Pulls performance insights for a given level, with optional breakdowns.
-    
-    Args:
-        level (str): The level to pull data for ('ad', 'adset', or 'campaign').
-        breakdowns (List[str], optional): A list of valid breakdown values.
-                                          Defaults to None (no breakdowns).
     """
+    action = f"Fetching {level}-level insights"
     if breakdowns:
-        print(f"➡️  Fetching {level}-level insights with breakdowns: {breakdowns}...")
-    else:
-        print(f"➡️  Fetching {level}-level insights...")
+        action += f" with breakdowns: {breakdowns}"
+    print(f"➡️  {action}...")
 
     fields = [
         "date_start", "date_stop",
@@ -109,8 +109,6 @@ def pull_insights(level: str, breakdowns: List[str] = None) -> pd.DataFrame:
         "limit": 500
     }
 
-    # IMPORTANT: Only add the 'breakdowns' parameter if it's actually provided.
-    # This prevents the API error you were seeing.
     if breakdowns:
         params["breakdowns"] = ",".join(breakdowns)
     
@@ -129,33 +127,42 @@ def save_dataframe(df: pd.DataFrame, filename: str):
 
 
 def main():
-    """Runs the full data extraction process."""
+    """
+    Runs the full data extraction process, organized by report type
+    to demonstrate correct API usage for breakdowns.
+    """
     print("🚀 Starting Facebook Ads data pull...")
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # --- Pull Metadata ---
+    # --- Report 1: Core Metadata ---
+    print("\n--- Pulling Core Metadata ---")
     meta_df = pull_metadata()
     save_dataframe(meta_df, "facebook_ads_meta.csv")
 
-    # --- Pull Insights (No Breakdowns by Default) ---
-    # By default, no breakdowns are requested to prevent errors.
+    # --- Report 2: High-Level Insights (No Breakdowns) ---
+    # This is the safest type of insights query and is guaranteed to work
+    # if your token and account ID are valid.
+    print("\n--- Pulling High-Level Insights (No Breakdowns) ---")
     ad_df = pull_insights("ad")
-    save_dataframe(ad_df, "facebook_ads_insights.csv")
+    save_dataframe(ad_df, "facebook_ads_insights_summary.csv")
     
-    adset_df = pull_insights("adset")
-    save_dataframe(adset_df, "facebook_adset_insights.csv")
+    # --- Report 3: Single Breakdown Example ---
+    # This demonstrates how to correctly request a single, valid breakdown.
+    # 'device_platform' will segment the data by Mobile, Desktop, etc.
+    print("\n--- Pulling Insights by a Single Breakdown ---")
+    device_breakdown = ["device_platform"]
+    insights_by_device_df = pull_insights("ad", breakdowns=device_breakdown)
+    save_dataframe(insights_by_device_df, "facebook_ads_insights_by_device.csv")
 
-    # --- EXAMPLE: Pull Insights WITH Breakdowns ---
-    # The error you are seeing is caused by activating this section with an invalid value.
-    # To fix it, ensure every value in the 'breakdown_values' list is valid.
-    #
-    # VALID VALUES INCLUDE: 'age', 'gender', 'country', 'region', 'device_platform', 'publisher_platform'
-    # See the error log for the complete list of allowed values.
-    #
-    # print("\n🚀 Starting pull for data with breakdowns...")
-    # breakdown_values = ["device_platform", "publisher_platform"] # This is a valid example
-    # ad_breakdown_df = pull_insights("ad", breakdowns=breakdown_values)
-    # save_dataframe(ad_breakdown_df, "facebook_ads_insights_by_platform.csv")
+    # --- Report 4: Combined Breakdown Example ---
+    # This demonstrates a valid *combination* of breakdowns. This is often
+    # where errors occur. 'publisher_platform' and 'platform_position' is a
+    # common and valid combination to see performance across Facebook Feed,
+    # Instagram Stories, Messenger Inbox, etc.
+    print("\n--- Pulling Insights by a Combined Breakdown ---")
+    placement_breakdown = ["publisher_platform", "platform_position"]
+    insights_by_placement_df = pull_insights("ad", breakdowns=placement_breakdown)
+    save_dataframe(insights_by_placement_df, "facebook_ads_insights_by_placement.csv")
 
     print("\n✨ Data pull complete.")
 
