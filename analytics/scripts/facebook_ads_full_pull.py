@@ -132,8 +132,9 @@ def main():
     daily_df.to_csv(daily_path, index=False)
     print(f"Wrote {len(daily_df)} rows to {daily_path}")
 
-    # 4) Placement breakdowns... run as separate calls
-    for bd in [["publisher_platform"], ["platform_position"], ["device_platform"]]:
+    # 4) Placement and Creative Asset breakdowns... run as separate calls
+    # <<< MODIFIED LINE
+    for bd in [["publisher_platform"], ["platform_position"], ["device_platform"], ["body_asset"], ["title_asset"]]:
         bname = "_".join(bd)
         df = pull_insights(breakdowns=bd)
         path = os.path.join(OUT_DIR, f"facebook_ads_insights_{bname}.csv")
