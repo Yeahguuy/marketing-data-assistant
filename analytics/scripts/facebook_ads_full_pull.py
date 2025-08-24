@@ -108,7 +108,7 @@ def safe_pull(level, label, breakdowns=None):
         outpath = os.path.join(OUT_DIR, filename)
         df.to_csv(outpath, index=False)
         print(f"Wrote {len(df)} rows to {outpath}")
-    except RuntimeError as err:
+    except Exception as err:  # catch all errors, not just RuntimeError
         print(f"Skipping {level} {breakdowns}: {err}")
 
 def main():
