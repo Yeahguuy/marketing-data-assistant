@@ -138,6 +138,7 @@ def main():
     save_dataframe(meta_df, "facebook_ads_meta.csv")
 
     # --- Pull Insights (No Breakdowns by Default) ---
+    # By default, no breakdowns are requested to prevent errors.
     ad_df = pull_insights("ad")
     save_dataframe(ad_df, "facebook_ads_insights.csv")
     
@@ -145,11 +146,14 @@ def main():
     save_dataframe(adset_df, "facebook_adset_insights.csv")
 
     # --- EXAMPLE: Pull Insights WITH Breakdowns ---
-    # To get breakdowns, uncomment the lines below and use valid values
-    # from the Facebook API documentation (e.g., 'age', 'gender', 'country', 'device_platform').
+    # The error you are seeing is caused by activating this section with an invalid value.
+    # To fix it, ensure every value in the 'breakdown_values' list is valid.
+    #
+    # VALID VALUES INCLUDE: 'age', 'gender', 'country', 'region', 'device_platform', 'publisher_platform'
+    # See the error log for the complete list of allowed values.
     #
     # print("\n🚀 Starting pull for data with breakdowns...")
-    # breakdown_values = ["device_platform", "publisher_platform"]
+    # breakdown_values = ["device_platform", "publisher_platform"] # This is a valid example
     # ad_breakdown_df = pull_insights("ad", breakdowns=breakdown_values)
     # save_dataframe(ad_breakdown_df, "facebook_ads_insights_by_platform.csv")
 
