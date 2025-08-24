@@ -7,7 +7,7 @@ LOOKBACK = int(os.getenv("FB_LOOKBACK_DAYS", "7"))
 OUT_DIR  = "analytics/dataprocessed"
 
 if not TOKEN or not ACCOUNT:
-    sys.exit("Missing env vars")
+    sys.exit("Missing env vars: FB_ACCESS_TOKEN, FB_AD_ACCOUNT_ID")
 
 session = requests.Session()
 session.headers.update({"Authorization": f"Bearer {TOKEN}"})
@@ -18,10 +18,10 @@ def paginate(url, params=None):
         resp = session.get(url, params=params, timeout=90)
         if not resp.ok:
             raise RuntimeError(f"{resp.status_code}: {resp.text}")
-        payload = resp.json()
-        for row in payload.get("data", []):
+        data = resp.json()
+        for row in data.get("data", []):
             yield row
-        next_url = payload.get("paging", {}).get("next")
+        next_url = data.get("paging", {}).get("next")
         if not next_url:
             break
         url, params = next_url, {}
@@ -99,7 +99,6 @@ def pull_insights(level="ad", breakdowns=None):
     return pd.DataFrame(list(paginate(url, params)))
 
 def safe_pull(level, label, breakdowns=None):
-    """Call pull_insights and catch any errors so the script doesn't exit."""
     try:
         df = pull_insights(level=level, breakdowns=breakdowns)
         filename = f"facebook_{level}_insights"
@@ -114,23 +113,13 @@ def safe_pull(level, label, breakdowns=None):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-
-    # creative metadata
     meta_df = pull_ads_metadata()
     meta_df.to_csv(os.path.join(OUT_DIR, "facebook_ads_meta.csv"), index=False)
     print(f"Wrote {len(meta_df)} rows to facebook_ads_meta.csv")
-
-    # ad-level metrics (no breakdown)
     safe_pull("ad", "aggregate")
-
-    # ad-level placement breakdowns
     for bd in [["device_platform"], ["platform_position"], ["publisher_platform"]]:
         safe_pull("ad", "_".join(bd), breakdowns=bd)
-
-    # adset-level metrics
     safe_pull("adset", "aggregate")
-
-    # adset-level demographics
     for bd in [["age"], ["gender"], ["country"], ["dma"], ["region"]]:
         safe_pull("adset", "_".join(bd), breakdowns=bd)
 
