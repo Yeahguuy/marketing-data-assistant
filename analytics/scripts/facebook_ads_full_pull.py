@@ -64,11 +64,12 @@ def paginate(url: str, params: Dict[str, Any] = None) -> Iterator[Dict[str, Any]
                 print("   💡 HINT: This is a 'Bad Request' error, often caused by an invalid combination of 'breakdowns' or incompatible 'fields' and 'breakdowns'. Please check the Facebook API documentation for valid combinations.", file=sys.stderr)
             else:
                 print(f"   Response: {e.response.text}", file=sys.stderr)
-
-            return
+            
+            # Raise the exception up to the caller so it can be caught and handled.
+            raise e
         except requests.exceptions.RequestException as e:
             print(f"❌ Network or request error: {e}", file=sys.stderr)
-            return
+            raise e
 
 
 def pull_metadata() -> pd.DataFrame:
@@ -128,43 +129,46 @@ def save_dataframe(df: pd.DataFrame, filename: str):
 
 def main():
     """
-    Runs the full data extraction process, organized by report type
-    to demonstrate correct API usage for breakdowns.
+    Runs the full data extraction process with resilient error handling for each report.
     """
     print("🚀 Starting Facebook Ads data pull...")
     os.makedirs(OUT_DIR, exist_ok=True)
 
     # --- Report 1: Core Metadata ---
-    print("\n--- Pulling Core Metadata ---")
-    meta_df = pull_metadata()
-    save_dataframe(meta_df, "facebook_ads_meta.csv")
+    try:
+        print("\n--- Pulling Core Metadata ---")
+        meta_df = pull_metadata()
+        save_dataframe(meta_df, "facebook_ads_meta.csv")
+    except Exception as e:
+        print(f"🔴 FAILED to pull core metadata. Error: {e}", file=sys.stderr)
 
     # --- Report 2: High-Level Insights (No Breakdowns) ---
-    # This is the safest type of insights query and is guaranteed to work
-    # if your token and account ID are valid.
-    print("\n--- Pulling High-Level Insights (No Breakdowns) ---")
-    ad_df = pull_insights("ad")
-    save_dataframe(ad_df, "facebook_ads_insights_summary.csv")
+    try:
+        print("\n--- Pulling High-Level Insights (No Breakdowns) ---")
+        ad_df = pull_insights("ad")
+        save_dataframe(ad_df, "facebook_ads_insights_summary.csv")
+    except Exception as e:
+        print(f"🔴 FAILED to pull high-level insights. Error: {e}", file=sys.stderr)
     
     # --- Report 3: Single Breakdown Example ---
-    # This demonstrates how to correctly request a single, valid breakdown.
-    # 'device_platform' will segment the data by Mobile, Desktop, etc.
-    print("\n--- Pulling Insights by a Single Breakdown ---")
-    device_breakdown = ["device_platform"]
-    insights_by_device_df = pull_insights("ad", breakdowns=device_breakdown)
-    save_dataframe(insights_by_device_df, "facebook_ads_insights_by_device.csv")
+    try:
+        print("\n--- Pulling Insights by a Single Breakdown ---")
+        device_breakdown = ["device_platform"]
+        insights_by_device_df = pull_insights("ad", breakdowns=device_breakdown)
+        save_dataframe(insights_by_device_df, "facebook_ads_insights_by_device.csv")
+    except Exception as e:
+        print(f"🔴 FAILED to pull insights by device. The 'device_platform' breakdown may be invalid for your account. Error: {e}", file=sys.stderr)
 
     # --- Report 4: Combined Breakdown Example ---
-    # This demonstrates a valid *combination* of breakdowns. This is often
-    # where errors occur. 'publisher_platform' and 'platform_position' is a
-    # common and valid combination to see performance across Facebook Feed,
-    # Instagram Stories, Messenger Inbox, etc.
-    print("\n--- Pulling Insights by a Combined Breakdown ---")
-    placement_breakdown = ["publisher_platform", "platform_position"]
-    insights_by_placement_df = pull_insights("ad", breakdowns=placement_breakdown)
-    save_dataframe(insights_by_placement_df, "facebook_ads_insights_by_placement.csv")
+    try:
+        print("\n--- Pulling Insights by a Combined Breakdown ---")
+        placement_breakdown = ["publisher_platform", "platform_position"]
+        insights_by_placement_df = pull_insights("ad", breakdowns=placement_breakdown)
+        save_dataframe(insights_by_placement_df, "facebook_ads_insights_by_placement.csv")
+    except Exception as e:
+        print(f"🔴 FAILED to pull insights by placement. The combination of 'publisher_platform' and 'platform_position' may be invalid for your account. Error: {e}", file=sys.stderr)
 
-    print("\n✨ Data pull complete.")
+    print("\n✨ Data pull process finished.")
 
 
 if __name__ == "__main__":
