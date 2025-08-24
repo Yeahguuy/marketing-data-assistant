@@ -1,13 +1,13 @@
 import os, sys, time, json, requests, pandas as pd
 
-TOKEN = os.getenv("FB_ACCESS_TOKEN")
+TOKEN   = os.getenv("FB_ACCESS_TOKEN")
 ACCOUNT = os.getenv("FB_AD_ACCOUNT_ID")
 API_VER = os.getenv("FB_API_VER", "v20.0")
 LOOKBACK = int(os.getenv("FB_LOOKBACK_DAYS", "7"))
-OUT_DIR = "analytics/dataprocessed"
+OUT_DIR  = "analytics/dataprocessed"
 
 if not TOKEN or not ACCOUNT:
-    sys.exit("Missing env vars: FB_ACCESS_TOKEN, FB_AD_ACCOUNT_ID")
+    sys.exit("Missing env vars")
 
 session = requests.Session()
 session.headers.update({"Authorization": f"Bearer {TOKEN}"})
@@ -18,10 +18,10 @@ def paginate(url, params=None):
         resp = session.get(url, params=params, timeout=90)
         if not resp.ok:
             raise RuntimeError(f"{resp.status_code}: {resp.text}")
-        data = resp.json()
-        for row in data.get("data", []):
+        payload = resp.json()
+        for row in payload.get("data", []):
             yield row
-        next_url = data.get("paging", {}).get("next")
+        next_url = payload.get("paging", {}).get("next")
         if not next_url:
             break
         url, params = next_url, {}
@@ -45,8 +45,7 @@ def flatten_creative(ad):
     out["creative_name"] = creative.get("name")
     out["thumbnail_url"] = creative.get("thumbnail_url")
     out["effective_object_story_id"] = creative.get("effective_object_story_id")
-
-    oss  = creative.get("object_story_spec") or {}
+    oss = creative.get("object_story_spec") or {}
     link = oss.get("link_data") or {}
     out["primary_text"]  = oss.get("message") or link.get("message")
     out["headline"]      = link.get("name")
@@ -99,43 +98,41 @@ def pull_insights(level="ad", breakdowns=None):
         params["breakdowns"] = ",".join(breakdowns)
     return pd.DataFrame(list(paginate(url, params)))
 
+def safe_pull(level, label, breakdowns=None):
+    """Call pull_insights and catch any errors so the script doesn't exit."""
+    try:
+        df = pull_insights(level=level, breakdowns=breakdowns)
+        filename = f"facebook_{level}_insights"
+        if breakdowns:
+            filename += "_" + "_".join(breakdowns)
+        filename += ".csv"
+        outpath = os.path.join(OUT_DIR, filename)
+        df.to_csv(outpath, index=False)
+        print(f"Wrote {len(df)} rows to {outpath}")
+    except RuntimeError as err:
+        print(f"Skipping {level} {breakdowns}: {err}")
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # 1) Ad creative/metadata
+    # creative metadata
     meta_df = pull_ads_metadata()
     meta_df.to_csv(os.path.join(OUT_DIR, "facebook_ads_meta.csv"), index=False)
     print(f"Wrote {len(meta_df)} rows to facebook_ads_meta.csv")
 
-    # 2) Ad-level aggregate metrics
-    ad_ins_df = pull_insights(level="ad")
-    ad_ins_df.to_csv(os.path.join(OUT_DIR, "facebook_ads_insights.csv"), index=False)
-    print(f"Wrote {len(ad_ins_df)} rows to facebook_ads_insights.csv")
+    # ad-level metrics (no breakdown)
+    safe_pull("ad", "aggregate")
 
-    # 3) Ad-level placements breakdowns (valid at ad level)
+    # ad-level placement breakdowns
     for bd in [["device_platform"], ["platform_position"], ["publisher_platform"]]:
-        label = "_".join(bd)
-        try:
-            df = pull_insights(level="ad", breakdowns=bd)
-            df.to_csv(os.path.join(OUT_DIR, f"facebook_ads_insights_{label}.csv"), index=False)
-            print(f"Wrote {len(df)} rows to facebook_ads_insights_{label}.csv")
-        except RuntimeError as err:
-            print(f"Skipping ad-level breakdown {label}: {err}")
+        safe_pull("ad", "_".join(bd), breakdowns=bd)
 
-    # 4) Ad-set–level aggregate metrics
-    adset_ins_df = pull_insights(level="adset")
-    adset_ins_df.to_csv(os.path.join(OUT_DIR, "facebook_adset_insights.csv"), index=False)
-    print(f"Wrote {len(adset_ins_df)} rows to facebook_adset_insights.csv")
+    # adset-level metrics
+    safe_pull("adset", "aggregate")
 
-    # 5) Ad-set–level demographic breakdowns
+    # adset-level demographics
     for bd in [["age"], ["gender"], ["country"], ["dma"], ["region"]]:
-        label = "_".join(bd)
-        try:
-            df = pull_insights(level="adset", breakdowns=bd)
-            df.to_csv(os.path.join(OUT_DIR, f"facebook_adset_insights_{label}.csv"), index=False)
-            print(f"Wrote {len(df)} rows to facebook_adset_insights_{label}.csv")
-        except RuntimeError as err:
-            print(f"Skipping adset-level breakdown {label}: {err}")
+        safe_pull("adset", "_".join(bd), breakdowns=bd)
 
 if __name__ == "__main__":
     main()
