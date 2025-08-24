@@ -47,7 +47,7 @@ jobs:
           FB_OUT_FILE: "analytics/dataprocessed/facebook_live_ads.csv"
         run: python analytics/scripts/facebook_ads_pull.py
 
-      # Full metadata, daily, and placement breakdowns
+      # Full metadata, ad/adset breakdowns (safe script)
       - name: Pull FB Ads full metadata + breakdowns
         run: python analytics/scripts/facebook_ads_full_pull.py
 
@@ -61,7 +61,15 @@ jobs:
           git add analytics/dataprocessed/facebook_ads_meta.csv || true
           git add analytics/dataprocessed/facebook_ads_insights.csv || true
           git add analytics/dataprocessed/facebook_ads_insights_daily.csv || true
-          git add analytics/dataprocessed/facebook_ads_insights_placement.csv || true
+          git add analytics/dataprocessed/facebook_ads_insights_publisher_platform.csv || true
+          git add analytics/dataprocessed/facebook_ads_insights_platform_position.csv || true
+          git add analytics/dataprocessed/facebook_ads_insights_device_platform.csv || true
+          git add analytics/dataprocessed/facebook_adset_insights.csv || true
+          git add analytics/dataprocessed/facebook_adset_insights_age.csv || true
+          git add analytics/dataprocessed/facebook_adset_insights_gender.csv || true
+          git add analytics/dataprocessed/facebook_adset_insights_country.csv || true
+          git add analytics/dataprocessed/facebook_adset_insights_dma.csv || true
+          git add analytics/dataprocessed/facebook_adset_insights_region.csv || true
 
           if git diff --cached --quiet; then
             echo "no changes"
